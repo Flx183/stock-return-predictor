@@ -43,3 +43,41 @@ Outputs are written under `data/`:
 - `trivial_momentum_backtest.csv`: daily close, signal, turnover, costs,
   returns, equity curve, and P&L curve.
 - `trivial_momentum_metrics.csv`: summary metrics after transaction costs.
+
+## Leakage-safe feature pipeline
+`src/features.py` builds one supervised row per target close. Each row carries
+both timestamps:
+
+- `feature_timestamp`: the previous trading close, when every feature is known.
+- `target_timestamp`: the close whose close-to-close return is being predicted.
+
+All rolling volatility, moving-average, lagged-return, drawdown, RSI, intraday
+range, and volume features are calculated as-of each close first, then shifted
+forward by one trading row. That makes the row for target day T use only data
+available at the close of T-1 or earlier.
+
+`src/features.py` also adds `target_volatility_5d`, a future realized-volatility
+label with `target_volatility_start_timestamp` and
+`target_volatility_end_timestamp`. That label is not used as a direction-model
+feature; it is included so volatility forecasting or risk sizing can be tested
+separately without blurring feature and target time.
+
+`src/ml_pipeline.py` then sorts by `target_timestamp`, trains on the earliest
+80% of rows, tests on the latest 20%, and has no shuffle option. The
+`StandardScaler` is fit with `fit_transform` on the training matrix only; the
+test matrix only receives `transform`. The feature-correlation report is also
+computed from the training rows only.
+
+Run it with:
+
+```bash
+python3 src/ml_pipeline.py
+```
+
+Outputs are written under `data/`:
+- `ml_supervised_dataset.csv`: feature rows with explicit feature and target
+  timestamps.
+- `ml_test_predictions.csv`: out-of-sample predicted direction probabilities.
+- `ml_test_metrics.csv`: out-of-sample classification metrics and split dates.
+- `train_feature_correlations.csv`: train-only feature pairs whose absolute
+  correlation is at least 0.8.
