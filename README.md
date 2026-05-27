@@ -81,3 +81,48 @@ Outputs are written under `data/`:
 - `ml_test_metrics.csv`: out-of-sample classification metrics and split dates.
 - `train_feature_correlations.csv`: train-only feature pairs whose absolute
   correlation is at least 0.8.
+
+To convert the model predictions into a costed strategy and compare it with
+buy-and-hold, run:
+
+```bash
+python3 src/model_backtest.py
+```
+
+This uses the same backtester as the trivial strategy. The first model test row
+is anchored at its `feature_timestamp`, so the first predicted close-to-close
+return is included without leaking earlier information. Outputs are written
+under `data/`:
+
+- `ml_strategy_backtest.csv`: model signal, turnover, costs, net strategy
+  returns, strategy equity curve, buy-and-hold returns, and buy-and-hold equity
+  curve.
+- `ml_strategy_metrics.csv`: out-of-sample strategy metrics after costs and
+  same-period buy-and-hold metrics.
+- `ml_monte_carlo_comparison.csv`: paired bootstrap comparison summary.
+- `ml_monte_carlo_samples.csv`: individual Monte Carlo bootstrap samples.
+
+For an interactive visualization report, open:
+
+```text
+notebooks/visualization_report.ipynb
+```
+
+The notebook loads the generated CSVs, shows the model/backtest summary tables,
+regenerates the charts, and displays them inline.
+
+For a terminal-only chart refresh, run:
+
+```bash
+python3 src/visualize.py
+```
+
+Charts are written under `data/figures/`:
+
+- `equity_curves.png`: ML strategy net of costs vs buy-and-hold.
+- `drawdowns.png`: drawdowns for both equity curves.
+- `prediction_probabilities.png`: out-of-sample predicted up probabilities,
+  split by correct and incorrect predictions.
+- `confusion_matrix.png`: predicted vs actual direction counts.
+- `train_feature_correlation_heatmap.png`: train-only feature correlations.
+- `monte_carlo_excess_return.png`: paired bootstrap excess-return distribution.
