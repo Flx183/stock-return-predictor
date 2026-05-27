@@ -8,14 +8,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_FILE = REPO_ROOT / "data" / "SPY_data.csv"
 OUTPUT_FILE = REPO_ROOT / "data" / "baseline_metrics.csv"
 TRADING_DAYS_PER_YEAR = 252
+OHLCV_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
 
-def load_spy_close_prices():
-	if not DATA_FILE.exists():
-		raise FileNotFoundError(f"{DATA_FILE} does not exist. Run src/pulldata.py first.")
+def load_spy_ohlcv(file_path=DATA_FILE):
+	file_path = Path(file_path)
+	if not file_path.exists():
+		raise FileNotFoundError(f"{file_path} does not exist. Run src/pulldata.py first.")
 
-	df = pd.read_csv(DATA_FILE, skiprows=[1, 2])
-	missing_columns = {"Price", "Close"} - set(df.columns)
+	df = pd.read_csv(file_path, skiprows=[1, 2])
+	missing_columns = {"Price", *OHLCV_COLUMNS} - set(df.columns)
 	if missing_columns:
 		raise ValueError(
 			"SPY_data.csv should match the yfinance SPY export used in this project. "
@@ -23,25 +25,41 @@ def load_spy_close_prices():
 		)
 
 	dates = pd.to_datetime(df["Price"], errors="coerce")
-	close = pd.to_numeric(df["Close"], errors="coerce")
+	numeric_columns = {
+		column: pd.to_numeric(df[column], errors="coerce")
+		for column in OHLCV_COLUMNS
+	}
 
-	bad_rows = dates.isna() | close.isna()
+	bad_rows = dates.isna().to_numpy()
+	for column in OHLCV_COLUMNS:
+		bad_rows |= numeric_columns[column].isna().to_numpy()
 	if bad_rows.any():
 		line_numbers = (df.index[bad_rows] + 4).astype(str).tolist()
 		raise ValueError(
-			"SPY_data.csv has invalid date or close price value(s) on CSV line(s): "
+			"SPY_data.csv has invalid date or OHLCV value(s) on CSV line(s): "
 			f"{', '.join(line_numbers[:5])}"
 		)
 
-	prices = pd.Series(close.to_numpy(), index=dates, name="Close").sort_index()
-	if prices.index.has_duplicates:
-		raise ValueError("SPY_data.csv has duplicate dates.")
-	if len(prices) < 2:
-		raise ValueError("SPY_data.csv needs at least two rows to calculate returns.")
-	if (prices <= 0).any():
-		raise ValueError("SPY_data.csv has zero or negative close prices.")
+	ohlcv = pd.DataFrame(
+		{column: numeric_columns[column].to_numpy() for column in OHLCV_COLUMNS},
+		index=dates,
+	).sort_index()
+	ohlcv.index.name = "Date"
 
-	return prices
+	if ohlcv.index.has_duplicates:
+		raise ValueError("SPY_data.csv has duplicate dates.")
+	if len(ohlcv) < 2:
+		raise ValueError("SPY_data.csv needs at least two rows to calculate returns.")
+	if (ohlcv[["Open", "High", "Low", "Close"]] <= 0).any().any():
+		raise ValueError("SPY_data.csv has zero or negative price values.")
+	if (ohlcv["Volume"] < 0).any():
+		raise ValueError("SPY_data.csv has negative volume values.")
+
+	return ohlcv
+
+
+def load_spy_close_prices():
+	return load_spy_ohlcv()["Close"]
 
 
 def compute_buy_and_hold_metrics(prices):
