@@ -183,3 +183,44 @@ only shrink one. Experiments 1 and 2 use a 1-day target and need no embargo
 (`embargo = 0`, unchanged). The pre-registered success criterion for Experiment
 3 is otherwise unchanged. This entry was added before the embargoed result was
 adopted as the reported verdict.
+
+### 2026-06-27 — disclosure: what was forward-registered vs re-tested
+
+The opening claim of this document — that the criteria were fixed "before the
+experiment code is run or any result is seen" — is **fully true for Experiment 3
+and only partly true for Experiments 1 and 2.** Honesty requires saying so
+plainly, and this document's own rule is to correct by dated append, never by
+editing the original text. The git history is the supporting evidence:
+
+- `c15fcda`, `6333057` (both **2026-05-27**): the single-split logistic pipeline
+  and its costed backtest were built and run. Its null was therefore **already
+  known** — accuracy 0.507, ROC AUC 0.476, P(strategy beats buy-and-hold) 0.386.
+- `1a32126` (**2026-05-29**): this pre-registration and the walk-forward
+  experiment code were committed together.
+
+What follows from those dates:
+
+- **Experiments 1 and 2 are pre-registered *re-tests*, not blind first looks.**
+  When this document was written, the single-split direction null was already in
+  hand; the "Prior / expectation" sections above disclose it openly. What was
+  genuinely fixed in advance here is the *distributional* decision rule (the
+  90% block-bootstrap CI excluding zero), applied to models whose single-split
+  behaviour was already seen. I do **not** claim these models were unseen. I make
+  no positive claim on direction, so a re-test that confirms a known null carries
+  no risk of a pre-registration violation favouring me.
+- **Experiment 3 is the one genuine forward registration.** No volatility
+  *forecasting model* — OLS or any other — existed in any commit before this
+  document. The `target_volatility_5d` *label* was added on 2026-05-27, but it
+  was never fit, scored, or eyeballed until the experiment code that shipped
+  alongside this file. So its success criterion (>= 10% RMSE improvement over
+  persistence **and** a block-bootstrap 90% CI excluding zero) was set before any
+  volatility result existed. This is the experiment whose result is **positive**,
+  and it is therefore the one where pre-registration actually does protective
+  work. The ordering is git-verifiable: this document (2026-05-29) precedes the
+  committed results snapshot in `RESULTS.md` (2026-06-27).
+
+The short version, the one to say out loud: *I failed to pre-register Experiments
+1 and 2 — they were run first as a single split, found null, then re-cast as a
+distribution. I did pre-register Experiment 3, and the commit dates prove the
+criterion came before the result.* A demonstrated correction beats a hidden
+gap.
