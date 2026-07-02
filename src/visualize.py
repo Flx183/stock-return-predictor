@@ -35,6 +35,7 @@ MONTE_CARLO_COMPARISON_FILE = DATA_DIR / "ml_monte_carlo_comparison.csv"
 MONTE_CARLO_SAMPLES_FILE = DATA_DIR / "ml_monte_carlo_samples.csv"
 SUPERVISED_DATASET_FILE = DATA_DIR / "ml_supervised_dataset.csv"
 TEST_PREDICTIONS_FILE = DATA_DIR / "ml_test_predictions.csv"
+HORIZON_LADDER_FILE = DATA_DIR / "horizon_ladder.csv"
 
 EQUITY_CURVES_FIGURE = FIGURES_DIR / "equity_curves.png"
 DRAWDOWNS_FIGURE = FIGURES_DIR / "drawdowns.png"
@@ -42,6 +43,7 @@ PREDICTION_PROBABILITIES_FIGURE = FIGURES_DIR / "prediction_probabilities.png"
 CONFUSION_MATRIX_FIGURE = FIGURES_DIR / "confusion_matrix.png"
 TRAIN_FEATURE_CORRELATION_HEATMAP_FIGURE = FIGURES_DIR / "train_feature_correlation_heatmap.png"
 MONTE_CARLO_EXCESS_RETURN_FIGURE = FIGURES_DIR / "monte_carlo_excess_return.png"
+HORIZON_LADDER_FIGURE = FIGURES_DIR / "horizon_ladder.png"
 
 
 def _read_csv(path, date_columns=None):
@@ -188,6 +190,45 @@ def plot_monte_carlo_excess_return(samples, summary, output_path=MONTE_CARLO_EXC
 	return _save_figure(fig, output_path)
 
 
+def plot_horizon_ladder(ladder, output_path=HORIZON_LADDER_FIGURE):
+	"""Two panels: return regression never beats drift; direction never beats the rising base rate."""
+	ladder = ladder.sort_values("horizon").reset_index(drop=True)
+	labels = [
+		f"{int(h)}d" + ("\n(illustrative)" if tier == "illustrative" else "")
+		for h, tier in zip(ladder["horizon"], ladder["rigor_tier"])
+	]
+	x = np.arange(len(ladder))
+
+	fig, (ax_r2, ax_acc) = plt.subplots(1, 2, figsize=(13, 5.5))
+
+	colors = ["#CC3311" if r2 <= 0 else "#228833" for r2 in ladder["linear_oos_r2_vs_drift"]]
+	ax_r2.bar(x, ladder["linear_oos_r2_vs_drift"], color=colors, alpha=0.85)
+	ax_r2.axhline(0.0, color="black", linewidth=1.2, label="Beats drift (R² > 0)")
+	for xi, r2 in zip(x, ladder["linear_oos_r2_vs_drift"]):
+		ax_r2.text(xi, r2, f"{r2:.2f}", ha="center", va="top" if r2 < 0 else "bottom", fontsize=9)
+	ax_r2.set_title("Return regression never beats drift\n(out-of-sample R² vs a prevailing-mean forecast)")
+	ax_r2.set_ylabel("Campbell-Thompson OOS R² vs drift")
+	ax_r2.set_xlabel("Forward horizon (trading days)")
+	ax_r2.set_xticks(x, labels=labels)
+	ax_r2.grid(True, axis="y", alpha=0.25)
+	ax_r2.legend(loc="lower left")
+
+	width = 0.38
+	ax_acc.bar(x - width / 2, ladder["logistic_accuracy"], width, label="Model accuracy", color="#4477AA")
+	ax_acc.bar(x + width / 2, ladder["base_rate_accuracy"], width, label="Always-up base rate", color="#BBBBBB")
+	ax_acc.plot(x, ladder["direction_base_rate"], color="#EE6677", marker="o", linewidth=1.5, label="Up-rate (risk premium)")
+	ax_acc.set_ylim(0.0, 1.0)
+	ax_acc.set_title("Direction accuracy stays below the rising base rate\n(the base-rate illusion grows with horizon)")
+	ax_acc.set_ylabel("Accuracy / up-rate")
+	ax_acc.set_xlabel("Forward horizon (trading days)")
+	ax_acc.set_xticks(x, labels=labels)
+	ax_acc.yaxis.set_major_formatter(lambda value, _: f"{value:.0%}")
+	ax_acc.grid(True, axis="y", alpha=0.25)
+	ax_acc.legend(loc="lower right")
+
+	return _save_figure(fig, output_path)
+
+
 def create_all_visualizations():
 	backtest = _read_csv(STRATEGY_BACKTEST_FILE, date_columns=["Date"])
 	metrics = _read_csv(STRATEGY_METRICS_FILE)
@@ -212,7 +253,7 @@ def create_all_visualizations():
 		],
 	)
 
-	return [
+	figures = [
 		plot_equity_curves(backtest, metrics),
 		plot_drawdowns(backtest),
 		plot_prediction_probabilities(predictions),
@@ -220,6 +261,10 @@ def create_all_visualizations():
 		plot_train_feature_correlation_heatmap(dataset),
 		plot_monte_carlo_excess_return(monte_carlo_samples, monte_carlo_summary),
 	]
+	# Only rendered once the multi-horizon experiment (Experiment 4) has been run.
+	if HORIZON_LADDER_FILE.exists():
+		figures.append(plot_horizon_ladder(_read_csv(HORIZON_LADDER_FILE)))
+	return figures
 
 
 def main():

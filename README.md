@@ -113,6 +113,17 @@ Outputs under `data/`:
 - `walkforward_volatility_oos.csv`: pooled out-of-sample forecasts and squared errors for both.
 - `walkforward_volatility_summary.csv`: pooled RMSE, RMSE improvement, QLIKE, out-of-sample R^2, the block-bootstrap CI, and the pre-registered verdict.
 
+Run the multi-horizon experiment (Experiment 4 — does predictability appear further out?) with:
+
+```bash
+python3 src/experiment_horizons.py
+```
+
+It re-uses the same harness with a forward-`h`-day return target (`build_leakage_safe_features(ohlcv, forward_horizon=h)`) across `h = 5, 21, 63, 252` trading days, adds longer look-back features, sets the bootstrap block length to `>= 2h` and the embargo to `h - 1`, and tests two pre-registered rules per horizon: beat a constant-drift forecast as a regression, and beat buy-and-hold as a non-overlapping direction strategy. Outputs under `data/`:
+- `horizon_regression.csv`: per horizon and model, OOS R^2 vs drift, RMSEs, and the block-bootstrap CI on the squared-error reduction.
+- `horizon_classification.csv`: per horizon and model, accuracy vs base rate, and the non-overlapping strategy vs buy-and-hold with its CI.
+- `horizon_ladder.csv`: the headline table (effective non-overlapping N, base rate, OOS R^2, accuracy, excess, verdict) per horizon.
+
 ### Results (pre-registered, out-of-sample 2020-06 to 2024-06, 1008 days)
 
 These are the verdicts the pre-registered criteria returned, reported as-is.
@@ -120,8 +131,9 @@ These are the verdicts the pre-registered criteria returned, reported as-is.
 - **Experiment 1 — logistic regression direction vs buy-and-hold: NULL.** Pooled accuracy 0.538 sits *below* the always-up base rate of 0.540 (ROC AUC 0.504). Mean daily excess return is -1.3e-05 with a 90% CI of [-2.0e-04, +1.4e-04] that straddles zero; total compounded excess is -1.2%. The distribution agrees with the single-split null: the strategy does not beat buy-and-hold.
 - **Experiment 2 — XGBoost vs logistic regression (economic test): NULL.** The gradient-boosted strategy does not beat the linear one net of costs; if anything it is worse (mean daily excess -2.3e-04, 90% CI [-4.5e-04, +4.1e-05], total compounded excess -37.6% over the window from over-trading). Nonlinear structure adds nothing economically here.
 - **Experiment 3 — volatility forecast vs persistence: BEATS PERSISTENCE.** The OLS model cuts pooled RMSE by 20.2% versus the naive persistence baseline (0.067 vs 0.085), with a 90% block-bootstrap CI on the per-day squared-error reduction of [1.7e-03, 3.6e-03] that excludes zero. QLIKE improves (0.48 vs 1.27) and out-of-sample R^2 versus persistence is 0.36. The improvement is positive in all eight folds and survives the 4-day embargo essentially unchanged, so it is not a fold-boundary artifact.
+- **Experiment 4 — longer horizons (week/month/quarter/year): NULL.** The 1-day null does not automatically extend, so it was tested. At `h = 5, 21, 63` trading days every model's out-of-sample R^2 versus a prevailing-mean drift forecast is *negative* (linear −1.13, −2.65, −6.18; regularized XGBoost −0.36, −0.68, −0.68), with squared-error-reduction CIs lying entirely below zero at the rigorous horizons — the features are worse than forecasting the mean. Direction accuracy (0.56–0.58) stays below the always-up base rate at every horizon, even as that base rate climbs 0.61 → 0.68 → 0.75 → 0.84; that rising number is the equity risk premium, not a forecastable edge, which is exactly why the benchmark is drift/buy-and-hold rather than 50%. The yearly horizon (~8 non-overlapping windows) is reported illustrative-only. The null broadens: OHLCV features do not beat drift or buy-and-hold from a day out to a quarter.
 
-The honest summary: next-day *direction* is not predictable on SPY with these features, and a nonlinear model does not rescue it — but near-term *volatility* is forecastable well beyond naive persistence, consistent with volatility clustering. Predictable risk, unpredictable return.
+The honest summary: next-day *direction* is not predictable on SPY with these features, a nonlinear model does not rescue it, and the null holds out to weekly, monthly, and quarterly horizons — but near-term *volatility* is forecastable well beyond naive persistence, consistent with volatility clustering. Predictable risk, unpredictable return, at every horizon tested.
 
 ## Limitations (the scope is the defense)
 
@@ -131,7 +143,7 @@ Every result above holds only inside these boundaries. Naming them is not a hedg
 - **Price and volume features only.** All 26 features are functions of OHLCV (returns, realized vol, moving-average ratios, drawdowns, RSI, intraday range, volume z-scores). No fundamentals, macro, options-implied vol, order flow, or sentiment. A null on direction is a statement about *this feature set*, not about all possible signals.
 - **Weak-form efficiency only.** Because the inputs are past prices and volume, the direction null bears only on **weak-form** market efficiency. It says nothing about semi-strong (public information) or strong (private information) forms.
 - **One window, regime-bound.** Features begin ~2010-10 (after the 200-day SMA warm-up); the pooled out-of-sample window is 2020-06 to 2024-06 (~1008 trading days). That window contains the COVID crash and the 2022 bear market — informative, but not a guarantee the results survive into other regimes.
-- **Daily, next-day horizon.** Direction is next-day close-to-close; the volatility target is 5-day-ahead realized vol. Nothing here speaks to intraday or multi-month horizons.
+- **Horizons from one day to one year — but not intraday, and yearly only illustratively.** Direction was tested at 1, 5, 21, and 63 trading days (all null) and 252 days (illustrative-only, ~8 non-overlapping windows); the volatility target is 5-day-ahead realized vol. Nothing here speaks to intraday horizons, and the yearly result is not evidence either way. The long-horizon predictability documented in the literature lives mostly in *valuation fundamentals* (dividend yield, CAPE), which are outside this OHLCV-only feature set by construction — so this is a null on price/volume, not on all long-horizon predictors.
 - **One cost model.** Results are net of a single linear cost of `0.0001` per unit turnover. They are not robust to a materially higher cost assumption, slippage, or market impact.
 - **The volatility win is relative to one baseline.** "Beats persistence" means it beats *naive last-value persistence* on 5-day realized vol. It is **not** a claim to beat a tuned GARCH/HAR model or the implied volatility surface.
 
@@ -139,7 +151,7 @@ Every result above holds only inside these boundaries. Naming them is not a hedg
 
 **Failing to reject the null is not the same as proving the null true.** A non-significant direction result means the test — at this sample size, with this feature set, on this asset and window — *did not find* an edge, not that no edge exists. The pre-registered bar (a 90% CI excluding zero) controls false positives, not false negatives, and with ~1008 noisy daily observations the test has limited power to detect a *small* true edge. So the defensible statement is "we did not find next-day direction predictable here," which is strictly weaker than "next-day direction is unpredictable." Absence of evidence is not evidence of absence.
 
-**What this project does not claim.** It does not claim markets are efficient, that SPY's direction is unpredictable in general, or that the EMH is true. It does not claim volatility forecasting is easy, or that the OLS model would beat a tuned GARCH/HAR or implied vol. It does not claim any strategy here is profitable. It claims exactly, and only, this: under a pre-registered, leakage-controlled, costed protocol on SPY daily data from 2020-06 to 2024-06, using price and volume features alone — (1) a logistic and a gradient-boosted next-day **direction** model did not beat buy-and-hold, and (2) an OLS forecast of 5-day-ahead realized **volatility** beat naive persistence by ~20% out of sample. Predictable risk, unpredictable return — for this asset, these features, this window.
+**What this project does not claim.** It does not claim markets are efficient, that SPY's direction is unpredictable in general, or that the EMH is true. It does not claim volatility forecasting is easy, or that the OLS model would beat a tuned GARCH/HAR or implied vol. It does not claim any strategy here is profitable. It claims exactly, and only, this: under a pre-registered, leakage-controlled, costed protocol on SPY daily data from 2020-06 to 2024-06, using price and volume features alone — (1) a logistic and a gradient-boosted next-day **direction** model did not beat buy-and-hold, (2) that direction null also held at 5-, 21-, and 63-day **horizons** (with the 1-year horizon under-powered and reported illustratively), against both a drift and a buy-and-hold benchmark, and (3) an OLS forecast of 5-day-ahead realized **volatility** beat naive persistence by ~20% out of sample. Predictable risk, unpredictable return — for this asset, these features, these horizons, this window.
 
 ## How each artifact threat is controlled (threat → code)
 
@@ -158,6 +170,9 @@ A backtest result is only as trustworthy as the specific mechanism that rules ou
    - Accuracy is judged against the **always-up base rate**, reported explicitly as `actual_positive_rate` ([experiment_direction.py:130](src/experiment_direction.py#L130)): pooled accuracy 0.538 sits *below* the 0.540 base rate, and ROC AUC 0.504 ≈ chance. The model's 0.875 predicted-up rate is what an accuracy-only view would have hidden.
 4. **Serial-correlation-inflated significance** (i.i.d. tests overstating confidence on autocorrelated returns).
    - Significance uses a **moving-block bootstrap** in overlapping 21-day blocks, preserving within-month autocorrelation that the i.i.d. paired bootstrap ([model_backtest.py:202](src/model_backtest.py#L202)) destroys: [walkforward.py:199-229](src/walkforward.py#L199-L229). The single pass/fail flag is whether the 90% CI lower bound clears zero: [walkforward.py:257](src/walkforward.py#L257).
+5. **Overlapping-target inflation at long horizons** (a `k`-day forward return sampled daily overlaps its neighbours by `k-1` days, so naive R^2 and standard errors are wildly overstated — the "myth of long-horizon predictability").
+   - The horizon experiment scales the bootstrap block length to `>= 2k` so the overlap-induced autocorrelation survives resampling, and embargoes `k-1` training rows per fold: [experiment_horizons.py](src/experiment_horizons.py) (`_horizon_folds`, `embargo = horizon - 1`).
+   - The number of *non-overlapping* windows (`n_oos / k`) is reported for every horizon (202 → 48 → 16 → 8), and horizons are tiered in advance — 5/21 rigorous, 63 suggestive, 252 illustrative-only — so a thin-sample "positive" at a year is never dressed up as evidence: [experiment_horizons.py](src/experiment_horizons.py) (`RIGOR_TIER`).
 
 For an interactive visualization report, open:
 
@@ -181,3 +196,4 @@ Charts are written under `data/figures/`:
 - `confusion_matrix.png`: predicted vs actual direction counts.
 - `train_feature_correlation_heatmap.png`: train-only feature correlations.
 - `monte_carlo_excess_return.png`: paired bootstrap excess-return distribution.
+- `horizon_ladder.png`: OOS R² vs drift and accuracy vs base rate across the 5/21/63/252-day horizons (rendered only after `python3 src/experiment_horizons.py` has produced `data/horizon_ladder.csv`).

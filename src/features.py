@@ -15,6 +15,14 @@ REQUIRED_COLUMNS = (*PRICE_COLUMNS, "Volume")
 TARGET_VOLATILITY_WINDOW = 5
 TARGET_VOLATILITY_COLUMN = f"target_volatility_{TARGET_VOLATILITY_WINDOW}d"
 
+# Longer look-backs used only by the multi-horizon experiment. They are kept out
+# of the canonical FEATURE_COLUMNS so the pre-registered 1-day Experiments 1/2/3
+# keep their exact feature set. `build_leakage_safe_features` always computes
+# these columns; they only enter a run when a caller passes them explicitly.
+LONG_RETURN_WINDOWS = (126, 252)
+LONG_VOLATILITY_WINDOWS = (126, 252)
+LONG_DRAWDOWN_WINDOWS = (126, 252)
+
 FEATURE_COLUMNS = [
 	*(f"return_{window}d" for window in RETURN_WINDOWS),
 	*(f"realized_vol_{window}d" for window in VOLATILITY_WINDOWS),
@@ -30,6 +38,15 @@ FEATURE_COLUMNS = [
 	"volume_change_1d",
 	"volume_zscore_21d",
 	"volume_zscore_63d",
+]
+
+# The canonical 26 features plus longer-look-back momentum/mean-reversion/vol
+# terms, so long-horizon structure can be captured. Still OHLCV-derived only.
+LONG_HORIZON_FEATURE_COLUMNS = [
+	*FEATURE_COLUMNS,
+	*(f"return_{window}d" for window in LONG_RETURN_WINDOWS),
+	*(f"realized_vol_{window}d" for window in LONG_VOLATILITY_WINDOWS),
+	*(f"drawdown_{window}d" for window in LONG_DRAWDOWN_WINDOWS),
 ]
 
 
@@ -81,18 +98,33 @@ def _rsi(close, window=14):
 	return rsi / 100.0
 
 
-def build_leakage_safe_features(ohlcv):
+def build_leakage_safe_features(ohlcv, forward_horizon=1, feature_columns=None):
 	"""
 	Build one supervised row per target close.
 
-	For row T, `target_timestamp` is the close whose return is being predicted.
-	`feature_timestamp` is the immediately prior trading close. Every feature is
-	first calculated as of a close timestamp, then shifted forward one row so that
-	the row for target T can only use data available at close T-1 or earlier.
+	`feature_timestamp` is the trading close as of which every feature is known;
+	each feature is first calculated as of a close timestamp, then shifted forward
+	one row so that a row can only use data available at that prior close or
+	earlier. `target_return` is the forward return over the next `forward_horizon`
+	trading days measured from the `feature_timestamp` close, and
+	`target_timestamp` is the close that closes that window (so a 1-day horizon
+	reproduces the original next-close target exactly). `target_direction` is the
+	sign of that forward return.
+
+	`feature_columns` selects which pre-computed feature columns are kept and
+	required to be non-null (defaults to the canonical FEATURE_COLUMNS). Pass
+	LONG_HORIZON_FEATURE_COLUMNS to include the longer look-back terms.
+
 	`target_volatility_5d` is a future realized-volatility label, not a feature:
 	it covers returns from `target_timestamp` through
 	`target_volatility_end_timestamp`.
 	"""
+	if not isinstance(forward_horizon, (int, np.integer)) or forward_horizon < 1:
+		raise ValueError("forward_horizon must be a positive integer.")
+	if feature_columns is None:
+		feature_columns = FEATURE_COLUMNS
+	feature_columns = list(feature_columns)
+
 	ohlcv = _validate_ohlcv(ohlcv)
 	close = ohlcv["Close"]
 	daily_return = close.pct_change()
@@ -128,6 +160,20 @@ def build_leakage_safe_features(ohlcv):
 	features_as_of_close["sma_50d_200d_spread"] = sma_50 / sma_200 - 1.0
 	features_as_of_close["drawdown_21d"] = close / close.rolling(21, min_periods=21).max() - 1.0
 	features_as_of_close["drawdown_63d"] = close / close.rolling(63, min_periods=63).max() - 1.0
+
+	# Longer look-backs (kept out of the canonical set; see LONG_* constants).
+	for window in LONG_RETURN_WINDOWS:
+		features_as_of_close[f"return_{window}d"] = close.pct_change(window)
+	for window in LONG_VOLATILITY_WINDOWS:
+		features_as_of_close[f"realized_vol_{window}d"] = (
+			daily_return.rolling(window=window, min_periods=window).std()
+			* np.sqrt(TRADING_DAYS_PER_YEAR)
+		)
+	for window in LONG_DRAWDOWN_WINDOWS:
+		features_as_of_close[f"drawdown_{window}d"] = (
+			close / close.rolling(window, min_periods=window).max() - 1.0
+		)
+
 	features_as_of_close["rsi_14d"] = _rsi(close, window=14)
 	features_as_of_close["intraday_return_1d"] = ohlcv["Close"] / ohlcv["Open"] - 1.0
 	features_as_of_close["range_1d"] = ohlcv["High"] / ohlcv["Low"] - 1.0
@@ -135,13 +181,22 @@ def build_leakage_safe_features(ohlcv):
 	features_as_of_close["volume_zscore_21d"] = _rolling_zscore(ohlcv["Volume"], 21)
 	features_as_of_close["volume_zscore_63d"] = _rolling_zscore(ohlcv["Volume"], 63)
 
-	features = features_as_of_close.loc[:, FEATURE_COLUMNS].shift(1)
+	# Forward return over `forward_horizon` trading days, measured from the
+	# feature close (the prior row). shift(1) is that feature close; shifting by
+	# (1 - forward_horizon) reaches the close `forward_horizon` steps ahead of it.
+	# forward_horizon == 1 collapses to the original next-close return exactly.
+	base_close = close.shift(1)
+	forward_close = close.shift(1 - forward_horizon)
+	forward_return = forward_close / base_close - 1.0
+	target_timestamps = timestamps.shift(1 - forward_horizon)
+
+	features = features_as_of_close.loc[:, feature_columns].shift(1)
 	dataset = pd.concat(
 		[
 			timestamps.shift(1).rename("feature_timestamp"),
-			timestamps.rename("target_timestamp"),
-			daily_return.rename("target_return"),
-			(daily_return > 0.0).astype(int).rename("target_direction"),
+			target_timestamps.rename("target_timestamp"),
+			forward_return.rename("target_return"),
+			(forward_return > 0.0).astype(int).rename("target_direction"),
 			timestamps.rename("target_volatility_start_timestamp"),
 			timestamps.shift(-(TARGET_VOLATILITY_WINDOW - 1)).rename("target_volatility_end_timestamp"),
 			future_realized_volatility.rename(TARGET_VOLATILITY_COLUMN),
@@ -151,7 +206,7 @@ def build_leakage_safe_features(ohlcv):
 	)
 	dataset = dataset.replace([np.inf, -np.inf], np.nan)
 	dataset = dataset.dropna(
-		subset=["feature_timestamp", "target_timestamp", "target_return", *FEATURE_COLUMNS]
+		subset=["feature_timestamp", "target_timestamp", "target_return", *feature_columns]
 	)
 	if dataset.empty:
 		raise ValueError("not enough valid OHLCV rows to build the requested features.")
