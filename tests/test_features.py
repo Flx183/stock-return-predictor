@@ -2,7 +2,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features import FEATURE_COLUMNS, TARGET_VOLATILITY_COLUMN, build_leakage_safe_features
+from src.features import (
+	FEATURE_COLUMNS,
+	LONG_HORIZON_FEATURE_COLUMNS,
+	TARGET_VOLATILITY_COLUMN,
+	build_leakage_safe_features,
+)
 
 
 def make_ohlcv(n_days=260):
@@ -60,6 +65,56 @@ def test_future_volatility_target_has_explicit_forward_window():
 	assert row["target_volatility_start_timestamp"] == target_timestamp
 	assert row["target_volatility_end_timestamp"] == ohlcv.index[224]
 	assert row[TARGET_VOLATILITY_COLUMN] == pytest.approx(expected_volatility)
+
+
+@pytest.mark.parametrize("horizon", [1, 5, 21, 63])
+def test_forward_horizon_target_spans_the_full_window(horizon):
+	ohlcv = make_ohlcv(n_days=500)
+	dataset = build_leakage_safe_features(ohlcv, forward_horizon=horizon)
+	close = ohlcv["Close"].to_numpy()
+
+	assert (dataset["feature_timestamp"] < dataset["target_timestamp"]).all()
+
+	feature_pos = ohlcv.index.get_indexer(dataset["feature_timestamp"])
+	target_pos = ohlcv.index.get_indexer(dataset["target_timestamp"])
+	# The target close is exactly `horizon` trading steps after the feature close.
+	assert ((target_pos - feature_pos) == horizon).all()
+
+	expected_return = close[target_pos] / close[feature_pos] - 1.0
+	np.testing.assert_allclose(dataset["target_return"].to_numpy(), expected_return, rtol=1e-9)
+	assert (dataset["target_direction"].to_numpy() == (expected_return > 0.0).astype(int)).all()
+
+
+def test_default_horizon_reproduces_next_close_target():
+	ohlcv = make_ohlcv()
+	dataset = build_leakage_safe_features(ohlcv)  # default forward_horizon=1
+	canonical_next_close_return = ohlcv["Close"].pct_change().reindex(dataset.index)
+	np.testing.assert_allclose(
+		dataset["target_return"].to_numpy(),
+		canonical_next_close_return.to_numpy(),
+		rtol=1e-12,
+	)
+
+
+def test_long_horizon_features_are_optional_and_complete():
+	ohlcv = make_ohlcv(n_days=900)
+	default = build_leakage_safe_features(ohlcv)
+	assert "return_252d" not in default.columns
+
+	extended = build_leakage_safe_features(
+		ohlcv, forward_horizon=21, feature_columns=LONG_HORIZON_FEATURE_COLUMNS
+	)
+	for column in LONG_HORIZON_FEATURE_COLUMNS:
+		assert column in extended.columns
+	assert extended[LONG_HORIZON_FEATURE_COLUMNS].notna().all().all()
+
+
+def test_forward_horizon_must_be_a_positive_integer():
+	ohlcv = make_ohlcv()
+	with pytest.raises(ValueError):
+		build_leakage_safe_features(ohlcv, forward_horizon=0)
+	with pytest.raises(ValueError):
+		build_leakage_safe_features(ohlcv, forward_horizon=1.5)
 
 
 def test_target_day_close_does_not_change_same_row_features():

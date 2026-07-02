@@ -224,3 +224,65 @@ The short version, the one to say out loud: *I failed to pre-register Experiment
 distribution. I did pre-register Experiment 3, and the commit dates prove the
 criterion came before the result.* A demonstrated correction beats a hidden
 gap.
+
+### 2026-07-02 — Experiment 4: does predictability appear at longer horizons?
+
+**Motivation.** The 1-day null (Experiments 1-2) is a statement about the 1-day
+horizon only. Weak-form efficiency is weakest, not strongest, at short horizons:
+the literature finds *more* structure further out (3-12 month momentum, multi-year
+mean reversion, valuation-ratio predictability whose R^2 rises with horizon). This
+experiment asks whether SPY returns become predictable from OHLCV-only features at
+weekly, monthly, quarterly, or yearly horizons.
+
+**Target parameterization.** `build_leakage_safe_features(ohlcv, forward_horizon=h)`
+sets `target_return` to the forward `h`-trading-day return measured from the
+`feature_timestamp` close; `h = 1` reproduces the original next-close target
+exactly. Features are the 26 canonical columns plus longer look-backs
+(`return_126d`, `return_252d`, `realized_vol_126d/252d`, `drawdown_126d/252d`), all
+still OHLCV-derived (`LONG_HORIZON_FEATURE_COLUMNS`). The canonical `FEATURE_COLUMNS`
+used by Experiments 1-3 is unchanged, so their verdicts are untouched.
+
+**Horizon ladder and rigor tiers (fixed in advance).** `h in {5, 21, 63, 252}`
+trading days = week / month / quarter / year. Because the number of *non-overlapping*
+windows (`n_oos / h`) collapses with `h`, tiers are declared before results:
+`h = 5, 21` **rigorous**; `h = 63` **suggestive**; `h = 252` **illustrative-only** —
+a positive at 252 is reported, never counted as evidence.
+
+**Two framings, two benchmarks.**
+1. *Regression* — `StandardScaler + LinearRegression` and `XGBRegressor`
+   (Experiment-2 hyperparameters, `objective="reg:squarederror"`) forecast
+   `target_return`. Benchmark = constant prevailing-mean *drift*. Headline =
+   Campbell-Thompson out-of-sample R^2 vs drift and the block-bootstrap CI of the
+   mean per-period squared-error reduction (`drift_sq_err - model_sq_err`).
+2. *Direction* — `LogisticRegression` and `XGBClassifier` forecast
+   `target_direction`. Benchmark = the drift-aware always-majority base rate
+   (reported next to accuracy so the base-rate illusion is explicit). Economic
+   headline = a long/flat strategy over **non-overlapping** `h`-day holding periods
+   vs buy-and-hold, and the block-bootstrap CI of the mean per-window excess.
+
+**Overlapping-data and sample-size controls.** Bootstrap block length =
+`max(21, 2h)` so overlapping-target autocorrelation survives resampling; walk-forward
+embargo = `h - 1`; test block = `max(126, 2h)` so every OOS block spans at least one
+horizon; effective non-overlapping `N` is reported for every horizon.
+
+**Pre-registered success criteria (per horizon).**
+- *Beats drift* iff OOS R^2 vs drift `> 0` **and** the 90% block-bootstrap CI of the
+  mean per-period squared-error reduction excludes zero on the low side **and** the
+  per-fold reduction is positive in a majority of folds.
+- *Beats buy-and-hold* iff the 90% block-bootstrap CI of the mean per-window excess
+  return excludes zero on the low side.
+- `h = 252` verdict is fixed to "illustrative-only" regardless of the numbers.
+
+**Prior / expectation.** OHLCV-only, single asset, one regime, no valuation
+fundamentals (where the literature's long-horizon signal actually lives): the honest
+expectation is a null at the rigorous horizons.
+
+**Timing disclosure (same standard as the 2026-06-27 entry).** This registration is
+committed **in the same change as its results and code** (`src/experiment_horizons.py`),
+so it is *not* a blind forward registration. What was genuinely fixed ahead of the
+code is the design: the horizon ladder, the tiers, both benchmarks, and the two
+CI-excludes-zero decision rules were set in the approved implementation plan before
+the experiment was written or run. Unlike Experiments 1-2 there was no prior
+single-split peek, but I make **no** claim of temporal separation between criterion
+and result here. As before, I make no positive claim (the rigorous-horizon result is
+a null), so a confirmed null carries no pre-registration violation favouring me.
