@@ -4,6 +4,7 @@ import pytest
 
 from src.features import (
 	FEATURE_COLUMNS,
+	HAR_RV_COLUMNS,
 	LONG_HORIZON_FEATURE_COLUMNS,
 	TARGET_VOLATILITY_COLUMN,
 	build_leakage_safe_features,
@@ -107,6 +108,26 @@ def test_long_horizon_features_are_optional_and_complete():
 	for column in LONG_HORIZON_FEATURE_COLUMNS:
 		assert column in extended.columns
 	assert extended[LONG_HORIZON_FEATURE_COLUMNS].notna().all().all()
+
+
+def test_har_rv_components_are_optional_and_leakage_safe():
+	ohlcv = make_ohlcv(n_days=400)
+	default = build_leakage_safe_features(ohlcv)
+	for column in HAR_RV_COLUMNS:
+		assert column not in default.columns
+
+	dataset = build_leakage_safe_features(ohlcv, feature_columns=[*FEATURE_COLUMNS, *HAR_RV_COLUMNS])
+	for column in HAR_RV_COLUMNS:
+		assert column in dataset.columns
+	assert dataset[HAR_RV_COLUMNS].notna().all().all()
+
+	# The daily HAR component as of a feature close is sqrt(252) * |that day's return|.
+	target_timestamp = ohlcv.index[300]
+	feature_index = 299
+	close = ohlcv["Close"]
+	prior_return = close.iloc[feature_index] / close.iloc[feature_index - 1] - 1.0
+	expected_daily = np.sqrt(252) * abs(prior_return)
+	assert dataset.loc[target_timestamp, "har_rv_daily"] == pytest.approx(expected_daily)
 
 
 def test_forward_horizon_must_be_a_positive_integer():

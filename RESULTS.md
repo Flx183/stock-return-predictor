@@ -9,14 +9,19 @@ from git history, not merely asserted.
 Every number below is reproducible from raw data with a fixed seed (42):
 
 ```bash
-python3 src/experiment_direction.py    # Experiments 1 and 2
-python3 src/experiment_volatility.py   # Experiment 3
-python3 src/experiment_horizons.py     # Experiment 4 (added 2026-07-02)
+python3 src/experiment_direction.py     # Experiments 1 and 2
+python3 src/experiment_volatility.py    # Experiment 3
+python3 src/experiment_horizons.py      # Experiment 4 (added 2026-07-02)
+python3 src/experiment_vol_baselines.py # Experiments 5 and 6 (added 2026-07-09)
+python3 src/experiment_vol_targeting.py # Experiment 7 (added 2026-07-09)
+python3 src/vix_data.py                  # pull ^VIX (external data, Experiment 8)
+python3 src/experiment_vix.py           # Experiment 8 (added 2026-07-09)
 ```
 
 The raw output CSVs that back this snapshot are committed alongside it under
-`data/walkforward_*.csv` and `data/horizon_*.csv` (force-added past the `data/`
-gitignore precisely because they are the pre-registered evidence). The
+`data/walkforward_*.csv`, `data/horizon_*.csv`, `data/vol_*_comparisons.csv`,
+`data/vol_targeting_*.csv`, and `data/vix_*_comparisons.csv` (force-added past the
+`data/` gitignore precisely because they are the pre-registered evidence). The
 single-split null is backed by `data/ml_test_metrics.csv` and
 `data/ml_monte_carlo_comparison.csv`.
 
@@ -88,6 +93,13 @@ sample, with a CI that excludes zero, improvement in every fold, and no
 sensitivity to the embargo. This is the result the forward pre-registration
 protects (see `PREREGISTRATION.md`, 2026-06-27 disclosure entry).
 
+**Read this with Experiments 5 and 6 below, never alone.** Persistence is a weak
+baseline. Against the standard strong baseline (HAR-RV) the ~20% edge shrinks to
+~5% and is no longer significant, and an ablation shows the win is carried by the
+volatility lags, not the other 22 features. The defensible one-liner is "beats
+last-value persistence ~20%, matches HAR-RV," not "beats persistence ~20%" in
+isolation.
+
 ## Experiment 4 — Longer horizons (week / month / quarter / year): NULL
 
 Does predictability appear further out, where the 1-day null cannot reach? Same
@@ -134,10 +146,105 @@ buy-and-hold at these horizons on SPY, 2010–2024. The long-horizon predictabil
 in the literature lives mostly in valuation fundamentals, which are outside this
 feature set by design.
 
+## Experiment 5 — 26-feature model vs HAR-RV: NULL (matches HAR-RV)
+
+The Experiment-3 win was measured against *persistence*, a weak baseline. HAR-RV
+(Corsi 2009) — an OLS of forward 5-day RV on lagged daily/weekly/monthly realized
+vol — is the standard strong baseline. Decision rule (both must hold): the
+26-feature model's RMSE improvement over HAR-RV is >= 10% **and** the
+block-bootstrap 90% CI of the mean per-day squared-error reduction excludes zero.
+
+| Comparison | Model RMSE | Baseline RMSE | RMSE improvement | OOS R² | 90% CI of sq-err reduction | Excludes zero? |
+| --- | --- | --- | --- | --- | --- | --- |
+| **26-feature vs HAR-RV** (gating) | 0.06749 | 0.07105 | **5.02%** | 0.098 | [−5.9e-05, +1.0e-03] | **No** |
+| HAR-RV vs persistence (context) | 0.07105 | 0.08458 | 15.99% | 0.294 | [1.4e-03, 2.8e-03] | Yes |
+| model vs persistence (Exp 3 check) | 0.06749 | 0.08458 | 20.20% | 0.363 | [1.7e-03, 3.6e-03] | Yes |
+
+**Verdict: NULL.** The 26-feature model does **not** beat HAR-RV: the RMSE gain is
+~5% (below the 10% bar) and the CI straddles zero. HAR-RV alone captures most of
+the edge (16% over persistence). The bottom row reproduces Experiment 3 to the
+digit (20.20%, 0.06749/0.08458), confirming the harness is unchanged. Honest
+claim: **the model matches HAR-RV; it does not beat it.**
+
+## Experiment 6 — feature ablation (persistence < vol-lags-only < full 26): NULL
+
+Three nested OLS models against the same target. Decision rule: the full 26-feature
+set beats vol-lags-only iff the 90% CI of the mean per-day *incremental*
+squared-error reduction excludes zero.
+
+| Comparison | Model RMSE | Baseline RMSE | RMSE improvement | OOS R² | 90% CI of sq-err reduction | Excludes zero? |
+| --- | --- | --- | --- | --- | --- | --- |
+| **full vs vol-lags-only** (gating) | 0.06749 | 0.06993 | **3.49%** | 0.069 | [−1.5e-04, +9.2e-04] | **No** |
+| vol-lags-only vs persistence (context) | 0.06993 | 0.08458 | 17.32% | 0.316 | [1.5e-03, 3.0e-03] | Yes |
+| full vs persistence (context) | 0.06749 | 0.08458 | 20.20% | 0.363 | [1.7e-03, 3.6e-03] | Yes |
+
+**Verdict: NULL.** The four volatility lags alone recover 17.3% of the 20.2% win;
+the other 22 features (returns, SMAs, RSI, drawdowns, volume) add ~3% more, and
+that increment's CI straddles zero. So the volatility result is a **volatility-lag
+(HAR-style) result**, not a "26 clever features" result. Honest claim: **a linear
+combination of volatility lags beats last-value persistence — essentially
+rediscovering HAR.**
+
+## Experiment 7 — volatility targeting: does a better forecast buy a better Sharpe? NULL
+
+The same vol-targeting strategy (daily exposure = target_vol / forecast_vol,
+long-only, 15% target, 2× cap, costed) run three times, changing only the forecast.
+Buy-and-hold Sharpe over the window is **1.0095**. Decision rule (Experiment-1
+style): a source beats buy-and-hold iff the block-bootstrap 90% CI of the Sharpe
+difference excludes zero on the low side.
+
+| Forecast feeding the strategy | Strategy Sharpe | Sharpe diff vs B&H | 90% CI of Sharpe diff | Excess total return | Turnover | Beats B&H? |
+| --- | --- | --- | --- | --- | --- | --- |
+| persistence (worst RMSE) | 1.146 | +0.137 | [−0.200, +0.536] | +25.0% | 170.6 | **No** |
+| HAR-RV | 1.127 | +0.118 | [−0.168, +0.415] | +16.7% | 132.7 | **No** |
+| 26-feature model (best RMSE) | 1.010 | +0.0001 | [−0.296, +0.251] | +0.2% | 133.4 | **No** |
+
+**Verdict: NULL for all three — and the accuracy→value link is inverted.** No
+forecast's vol-targeting strategy significantly beats buy-and-hold on Sharpe (every
+CI straddles zero, over a window where buy-and-hold already had Sharpe ~1.0). More
+pointedly: the **best-RMSE forecast produced the *worst* economic outcome** — the
+26-feature model's vol-targeted Sharpe is identical to buy-and-hold (+0.0001), while
+the crudest forecast (persistence) gave the largest point improvement (+0.137). The
+mechanism is visible in the diagnostics: persistence is the most reactive forecast
+(hits the 2× cap 16.7% of the time, highest turnover), so it times exposure most
+aggressively — which happened to help over 2020–2024 but is not statistically
+reliable. The lesson practitioners repeat: **better RMSE does not translate into a
+better Sharpe after costs.** Here the RMSE ranking and the Sharpe ranking are
+literally reversed.
+
+## Experiment 8 — VIX (option-implied vol): NULL both ways (steps outside weak-form)
+
+The only experiment that uses information beyond SPY OHLCV: VIX is built from S&P 500
+option prices. Two questions on the same 5-day realized-vol target, VIX taken as of
+the feature close (VIX/100, decimal annualized). The model-vs-persistence row
+reproduces Experiment 3 exactly (20.20%, n=1008), confirming the row set is unchanged.
+
+| Question | Comparison | RMSE | Baseline RMSE | Improvement | 90% CI of reduction | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Q1** VIX as a forecast | VIX vs model | 0.08626 | 0.06749 | **−27.8%** | [−4.2e-03, −1.5e-03] | **NULL** |
+| Q1 (context) | VIX vs persistence | 0.08626 | 0.08458 | −1.99% | [−2.0e-03, +1.6e-03] | worse |
+| **Q2** VIX as a feature | model+VIX vs model | 0.06774 | 0.06749 | **−0.37%** | [−4.2e-04, +3.7e-04] | **NULL** |
+
+**Verdict: NULL both ways.** As a raw forecast (Q1) VIX is **27.8% worse** than the
+model and even slightly worse than naive persistence — exactly what the **variance
+risk premium** predicts: VIX (median ~16.6% annualized) systematically sits above
+realized vol, so as an uncalibrated point forecast of near-term RV it is biased high.
+As an added feature (Q2), where the OLS can de-bias and scale it, lagged VIX still
+adds **nothing** beyond the 26 historical-vol-inclusive features (incremental CI
+straddles zero). For this 5-day horizon, past realized volatility already contains
+what option-implied vol would contribute. Stepping outside weak-form efficiency did
+not buy a better forecast.
+
 ## One-line summary
 
 Next-day **direction** on SPY is not predictable with these price/volume
 features, a nonlinear model does not change that, and **the null holds out to
-weekly, monthly, and quarterly horizons too** — while near-term **realized
-volatility** is forecastable well beyond naive persistence. Predictable risk,
-unpredictable return, at every horizon tested.
+weekly, monthly, and quarterly horizons too**. Near-term **realized volatility**
+*is* forecastable — but the honest version is narrow: a linear combination of
+volatility lags beats last-value persistence by ~20% and **matches, but does not
+beat, HAR-RV**; the extra 22 features add nothing significant; when the forecast is
+put to work in a vol-targeting strategy **no source beats buy-and-hold on Sharpe,
+and the best-RMSE forecast delivers the least economic value**; and even **option-
+implied volatility (VIX) does not improve the forecast**, as a raw input or a
+feature. Predictable risk, unpredictable return — and even the predictable risk is
+just HAR, does not pay, and is not helped by the options market.
