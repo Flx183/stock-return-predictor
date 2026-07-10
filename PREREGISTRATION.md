@@ -286,3 +286,140 @@ the experiment was written or run. Unlike Experiments 1-2 there was no prior
 single-split peek, but I make **no** claim of temporal separation between criterion
 and result here. As before, I make no positive claim (the rigorous-horizon result is
 a null), so a confirmed null carries no pre-registration violation favouring me.
+
+### 2026-07-09 — Experiments 5 & 6: is the volatility win real, and where is it from?
+
+**Motivation.** Experiment 3's headline — the 26-feature OLS beats naive persistence
+on 5-day realized volatility by ~20% RMSE — is measured against a *weak* baseline.
+Persistence (last-value) is the easiest thing to beat. Two nested follow-ups test
+whether the win survives a strong baseline and where inside the feature set it comes
+from. Both run through the identical Experiment-3 apparatus: expanding 8×126 folds,
+`embargo = 4`, `StandardScaler + LinearRegression` (`_ols_fit_predict`), moving-block
+bootstrap (block 21, 10000 resamples, seed 42), 90% CI. The target is unchanged
+(`target_volatility_5d`). New regressors are OHLCV-derived and kept out of the
+canonical `FEATURE_COLUMNS`, so Experiments 1-4 are untouched.
+
+**Experiment 5 — 26-feature OLS vs HAR-RV.** HAR-RV (Corsi 2009) is the standard
+strong baseline: an OLS of forward 5-day RV on three lagged realized-vol components,
+annualized daily / weekly / monthly volatility from daily squared returns
+(`HAR_RV_COLUMNS`, windows 1 / 5 / 22). No hyperparameters, so no tuning-leakage —
+the same argument that licensed the Experiment-3 OLS.
+- *Headline statistic.* Pooled RMSE improvement of the 26-feature model over HAR-RV,
+  and the block-bootstrap CI of the mean per-day squared-error reduction
+  (`har_sq_err - model_sq_err`).
+- *Pre-registered success criterion (both must hold).* RMSE improvement over HAR-RV
+  `>= 10%` **and** the 90% CI excludes zero on the low side.
+- *Reported alongside (not gating).* HAR-RV vs persistence, model vs persistence (a
+  built-in reproduction check of Experiment 3), QLIKE and OOS R² for each pair.
+- *Prior / expectation.* HAR-RV is strong; the honest expectation is that the 20%
+  edge over persistence shrinks a lot, possibly to nothing. "Beats persistence ~20%,
+  matches HAR-RV" is the defensible claim; "beats persistence ~20%" while never
+  checking HAR-RV is the claim that does not survive scrutiny.
+
+**Experiment 6 — feature ablation (nested models).** Three models against the same
+target: persistence (`realized_vol_5d` as the forecast), an OLS on the four
+realized-vol lags only (`VOLATILITY_FEATURE_COLUMNS` = realized_vol 5/10/21/63), and
+the full 26-feature OLS.
+- *Pre-registered question / criterion.* Does the full set beat vol-lags-only? Pass
+  iff the 90% CI of the mean per-day *incremental* squared-error reduction
+  (`vollag_sq_err - full_sq_err`) excludes zero on the low side.
+- *Reported alongside (not gating).* Full vs persistence and vol-lags-only vs
+  persistence, so the decomposition of the ~20% win is visible.
+- *Language rule fixed in advance.* If vol lags carry the win, the honest claim
+  collapses to "a linear combination of volatility lags beats last-value persistence"
+  (≈ rediscovering HAR). If the non-vol features add signal beyond vol lags with a CI
+  excluding zero, that is the genuinely interesting result, stated no more strongly
+  than the CI supports.
+
+**Timing disclosure (same standard as the 2026-06-27 and 2026-07-02 entries).** Both
+experiments are committed **in the same change as their code and results**
+(`src/experiment_vol_baselines.py`); this is not a blind forward registration. The
+model set, the baselines, and the CI-excludes-zero decision rules were fixed in the
+approved plan before the code was written. These are re-tests that can only *weaken*
+the Experiment-3 positive (a stronger baseline, a stricter nested comparison), so the
+direction of any bias is against my own prior headline, not for it.
+
+### 2026-07-09 — Experiment 7: does a better volatility forecast buy a better Sharpe?
+
+**Motivation.** Experiments 3-6 are about statistical accuracy (RMSE). The question a
+practitioner asks is whether accuracy converts into economic value. This experiment
+runs one volatility-targeting strategy through the existing costed backtester, fed by
+three forecasts of the same 5-day-ahead realized vol -- naive persistence, HAR-RV,
+and the 26-feature OLS -- and asks, per source, whether it beats SPY buy-and-hold on
+risk-adjusted return.
+
+**Strategy (fixed in advance).** Daily target exposure = `target_vol / forecast_vol`,
+long-only, floored and capped: `TARGET_ANNUAL_VOL = 0.15`, `POSITION_CAP = 2.0`,
+`FORECAST_FLOOR = 1e-6` (an OLS vol forecast can be non-positive; the floor + cap
+bound it). Costed at `0.0001` per unit turnover, the same backtester
+(`backtest_daily_signal`) and prior-close anchor used everywhere else: the position
+held for the close-to-close return ending on day t is sized by the forecast made as
+of day t-1 (`feature_timestamp`), so it is leakage-safe. The strategy, target vol,
+cap, and cost are **identical** across the three forecasts; only the forecast changes,
+so any difference is attributable to the forecast alone. The Sharpe comparison is
+invariant to `TARGET_ANNUAL_VOL` up to the cap, so that constant is a scale, not a
+tuned knob.
+
+**Headline statistic.** Annualized Sharpe difference (strategy - buy-and-hold),
+computed on the pooled out-of-sample daily returns, with a moving-block bootstrap
+(block 21, 10000 resamples, seed 42) paired by day.
+
+**Pre-registered success criterion (per source, Experiment-1 style).** A source's
+vol-targeting strategy is declared to beat buy-and-hold **iff the block-bootstrap 90%
+CI of the Sharpe difference excludes zero on the low side.**
+
+**Reported alongside (not gating).** Mean daily excess return and its CI, total
+return vs buy-and-hold, turnover and transaction cost, average position, capped and
+floored fractions, and the same statistics for all three sources side by side (the
+comparison that ties forecast accuracy to economic value).
+
+**Prior / expectation.** Volatility targeting can raise Sharpe (Moreira-Muir 2017),
+but Experiments 5-6 showed the three forecasts are near-identical in accuracy, so the
+honest expectation is that the sources land close together and that better RMSE does
+not obviously buy a better Sharpe after costs. Reported either way.
+
+**Timing disclosure (same standard as the entries above).** Committed in the same
+change as its code and results (`src/experiment_vol_targeting.py`); not a blind
+forward registration. The strategy definition, the three sources, and the
+Sharpe-CI decision rule were fixed in the approved plan before the code was written.
+The experiment makes no positive claim I have an interest in — a null (no source
+beats buy-and-hold) is the expected and reported outcome.
+
+### 2026-07-09 — Experiment 8: does option-implied volatility (VIX) help?
+
+**Motivation and scope change.** Every experiment so far used SPY OHLCV only, so the
+direction nulls bear on *weak-form* efficiency. This one deliberately steps outside
+it: the CBOE VIX index is built from S&P 500 option prices and embeds forward-looking
+information no function of past prices and volume can hold. VIX is quoted in
+annualized percentage points; dividing by 100 puts it in the same decimal annualized
+units as `target_volatility_5d`. Data source: `^VIX` via yfinance into
+`data/VIX_data.csv` (`src/vix_data.py`), same 2010-2024 range as SPY.
+
+**Two questions, both through the Experiment-3 harness** (expanding 8×126 folds,
+`embargo = 4`, `_ols_fit_predict`, block bootstrap 21/10000/seed 42, 90% CI). VIX is
+taken as of the feature close (the prior close), so it is known before the target
+window and shares the models' information set — leakage-safe.
+
+**Q1 — VIX as a standalone forecast.** Forecast = VIX/100 as of the feature close.
+- *Criterion (same two-part bar as Experiment 5).* VIX beats the 26-feature model
+  iff its RMSE improvement over the model is `>= 10%` **and** the 90% block-bootstrap
+  CI of the mean per-day squared-error reduction excludes zero.
+- *Reported alongside.* VIX vs persistence, VIX vs HAR-RV, and model vs persistence
+  (an Experiment-3 reproduction check on this dataset).
+- *Prior.* VIX carries a variance risk premium (it sits above realized vol on
+  average) and is a 30-day measure used on a 5-day target, so as a raw point forecast
+  it is biased high and expected to lose on RMSE. Its value, if any, is as a feature.
+
+**Q2 — VIX as an added feature.** Add lagged VIX (as of the feature close) to the 26
+features and refit the OLS.
+- *Criterion (same as Experiment 6).* The augmented model beats the 26-feature model
+  iff the 90% CI of the mean per-day *incremental* squared-error reduction excludes
+  zero on the low side.
+- *Prior.* Uncertain: implied vol can carry incremental information, but for a 5-day
+  horizon the historical realized-vol lags are already informative, so the honest
+  expectation is a small, possibly non-significant, contribution.
+
+**Timing disclosure (same standard as the entries above).** Committed in the same
+change as its code and results (`src/experiment_vix.py`); not a blind forward
+registration. The two questions, the VIX construction (as-of feature close, /100),
+and both decision rules were fixed in the approved plan before the code was written.

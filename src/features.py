@@ -49,6 +49,16 @@ LONG_HORIZON_FEATURE_COLUMNS = [
 	*(f"drawdown_{window}d" for window in LONG_DRAWDOWN_WINDOWS),
 ]
 
+# The realized-volatility lags already in the canonical set. Used as the nested
+# "vol-lags only" model in the volatility feature ablation (Experiment 6).
+VOLATILITY_FEATURE_COLUMNS = [f"realized_vol_{window}d" for window in VOLATILITY_WINDOWS]
+
+# HAR-RV regressors (Corsi 2009): annualized realized volatility aggregated at
+# daily / weekly / monthly horizons from daily squared returns. Kept out of the
+# canonical set; used as the strong volatility baseline in Experiment 5.
+HAR_RV_WINDOWS = {"har_rv_daily": 1, "har_rv_weekly": 5, "har_rv_monthly": 22}
+HAR_RV_COLUMNS = list(HAR_RV_WINDOWS)
+
 
 def _validate_ohlcv(ohlcv):
 	if not isinstance(ohlcv, pd.DataFrame):
@@ -173,6 +183,13 @@ def build_leakage_safe_features(ohlcv, forward_horizon=1, feature_columns=None):
 		features_as_of_close[f"drawdown_{window}d"] = (
 			close / close.rolling(window, min_periods=window).max() - 1.0
 		)
+
+	# HAR-RV components (Experiment 5 baseline): annualized realized volatility
+	# from daily squared returns, aggregated over daily/weekly/monthly windows.
+	daily_variance = daily_return**2
+	for column, window in HAR_RV_WINDOWS.items():
+		mean_variance = daily_variance.rolling(window=window, min_periods=window).mean()
+		features_as_of_close[column] = np.sqrt(TRADING_DAYS_PER_YEAR * mean_variance)
 
 	features_as_of_close["rsi_14d"] = _rsi(close, window=14)
 	features_as_of_close["intraday_return_1d"] = ohlcv["Close"] / ohlcv["Open"] - 1.0
